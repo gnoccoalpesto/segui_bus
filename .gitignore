@@ -2,3 +2,9 @@
 skills-lock.json
 docs/agents/
 AGENTS.md
+
+research/
+
+.env
+.env.*
+!.env.example
