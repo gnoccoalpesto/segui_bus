@@ -8,3 +8,12 @@ research/
 .env
 .env.*
 !.env.example
+
+# Python / tooling
+.venv/
+__pycache__/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
