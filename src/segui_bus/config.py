@@ -40,6 +40,7 @@ class Settings:
     ws_path: str
     fallback_vp_interval_s: int
     fallback_tu_interval_s: int
+    cache_dir: Path
 
     @property
     def client_header(self) -> str:
@@ -75,6 +76,11 @@ class Settings:
         return f"{self.base_url}/{self.namespace}/gtfs-rt/{feed}.{fmt}"
 
     @property
+    def gtfs_url(self) -> str:
+        """The static GTFS zip: the one endpoint that supports conditional GET."""
+        return f"{self.base_url}/{self.namespace}/gtfs.zip"
+
+    @property
     def ws_url(self) -> str:
         """WebSocket endpoint used later by the long-running service.
 
@@ -104,4 +110,5 @@ def load_settings(env_file: Path | None = None) -> Settings:
         ws_path=os.getenv("BUSONE_WS_PATH", "/ws"),
         fallback_vp_interval_s=int(os.getenv("BUSONE_FALLBACK_VP_INTERVAL_S", "30")),
         fallback_tu_interval_s=int(os.getenv("BUSONE_FALLBACK_TU_INTERVAL_S", "15")),
+        cache_dir=Path(os.getenv("BUSONE_CACHE_DIR", str(REPO_ROOT / ".cache"))),
     )

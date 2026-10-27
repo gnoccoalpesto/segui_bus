@@ -7,6 +7,7 @@ about protobuf, HTTP or the WebSocket.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -16,6 +17,7 @@ class TripRef:
 
     trip_id: str
     route_id: str  # raw value as the feed gives it, e.g. "PC15"
+    line: str | None = None  # human line number, e.g. "15"; filled from routes.txt
     direction_id: int | None = None
     start_time: str | None = None  # "19:32:00"
     start_date: str | None = None  # "20261020"
@@ -99,3 +101,64 @@ class TripUpdateSnapshot:
     feed_timestamp: int
     received_at: float
     trip_updates: tuple[TripUpdate, ...] = ()
+
+
+# --- static GTFS (gtfs.zip) ------------------------------------------------
+#
+# The scheduled world: what exists independently of any running bus. Loaded
+# once and kept in memory; the realtime snapshots above are matched against it.
+
+
+@dataclass(frozen=True, slots=True)
+class Stop:
+    """A physical boarding point ("fermata")."""
+
+    stop_id: str
+    name: str
+    point: GeoPoint
+
+
+@dataclass(frozen=True, slots=True)
+class Route:
+    """A line ("linea"): the number a rider reads on the front of the bus."""
+
+    route_id: str  # "PC15"
+    line: str  # "15" — route_short_name
+    long_name: str | None = None
+    color: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Trip:
+    """A scheduled run of a line, in one direction."""
+
+    trip_id: str
+    route_id: str
+    direction_id: int | None = None
+    headsign: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledStop:
+    """One stop of a trip. arrival_time is a service-day clock: "06:25:00"."""
+
+    stop_id: str
+    stop_sequence: int
+    arrival_time: str
+
+
+@dataclass(frozen=True, slots=True)
+class StaticFeed:
+    """The parsed gtfs.zip, indexed for lookups.
+
+    etag/last_modified identify the exact build this instance came from, so
+    cached derived state can be invalidated when the feed is rebuilt.
+    """
+
+    etag: str | None
+    last_modified: str | None
+    stops: Mapping[str, Stop]
+    routes: Mapping[str, Route]  # by route_id
+    routes_by_line: Mapping[str, Route]  # by human line number, e.g. "15"
+    trips: Mapping[str, Trip]  # by trip_id
+    trip_stops: Mapping[str, tuple[ScheduledStop, ...]]  # by trip_id, in order
