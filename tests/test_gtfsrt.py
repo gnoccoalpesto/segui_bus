@@ -196,7 +196,7 @@ class MultiBusTest:
 
     Opt-in because it needs the network and takes five minutes:
 
-        SEGUI_BUS_LIVE=1 uv run pytest tests/test_gtfsrt.py -k MultiBus -s
+        SEGUI_BUS_LIVE=1 python -m pytest tests/test_gtfsrt.py -k MultiBus -s
     """
 
     def test_line_15_for_five_minutes(self):
