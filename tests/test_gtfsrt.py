@@ -9,12 +9,12 @@ observation that is skipped unless SEGUI_BUS_LIVE=1.
 
 import os
 import time
-from urllib.request import Request, urlopen
 
 import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
 from segui_bus.config import load_settings
+from segui_bus.fetch import fetch_vehicle_positions
 from segui_bus.gtfsrt import parse_trip_updates, parse_vehicle_positions
 
 # --- builders --------------------------------------------------------------
@@ -176,44 +176,36 @@ def test_garbage_payload_raises_value_error():
 # --- live observation ------------------------------------------------------
 
 LIVE = os.getenv("SEGUI_BUS_LIVE") == "1"
+
+# The experiment's target lives here, not in a test name.
+ROUTE_ID = "PC15"
 POLL_EVERY_S = 30  # one sample per vehicle-positions emission (research note §3.2)
 WATCH_FOR_S = 5 * 60
 
 
-def _fetch_vehicle_positions(settings) -> bytes:
-    """One realtime fetch, with the project's identification headers."""
-    request = Request(settings.feed_url("vehicle-positions"), headers=settings.headers())
-    with urlopen(request, timeout=settings.fetch_timeout_s) as response:
-        return response.read()
-
-
 @pytest.mark.skipif(not LIVE, reason="live test: set SEGUI_BUS_LIVE=1 to run it")
 class MultiBusTest:
-    """Watch the buses on one line for five minutes and print their positions.
+    """Watch the buses of one route for five minutes.
 
-    Line 15 is route_id "PC15" here; the human line number comes from the static
-    GTFS routes.txt (added later), so for now the filter is on the raw route_id.
-
-    Opt-in because it needs the network and takes five minutes:
-
-        SEGUI_BUS_LIVE=1 python -m pytest tests/test_gtfsrt.py -k MultiBus -s
+    Opt-in because it needs the network and takes five minutes. Set
+    SEGUI_BUS_LIVE=1 in .env and run it from the test explorer.
     """
 
-    def test_line_15_for_five_minutes(self):
+    def test_buses_of_the_route_move_over_time(self):
         settings = load_settings()
         deadline = time.monotonic() + WATCH_FOR_S
         seen: set[str] = set()
 
         while time.monotonic() < deadline:
-            snapshot = parse_vehicle_positions(_fetch_vehicle_positions(settings))
+            snapshot = fetch_vehicle_positions(settings)
 
             # One progress line per sample: proves the loop is alive even when
-            # no bus of the line is currently in the feed.
+            # no bus of the route is currently in the feed.
             print(f"-- {time.strftime('%H:%M:%S')} --", flush=True)
 
             for vp in snapshot.vehicles:
-                # A vehicle without a trip or a position cannot be attributed to a line.
-                if vp.trip is None or vp.trip.route_id != "PC15" or vp.position is None:
+                # A vehicle without a trip or a position cannot be attributed to a route.
+                if vp.trip is None or vp.trip.route_id != ROUTE_ID or vp.position is None:
                     continue
                 seen.add(vp.vehicle.vehicle_id)
                 # Raw floats on purpose: no rounding, so movement is visible.
@@ -229,4 +221,4 @@ class MultiBusTest:
             if remaining > 0:
                 time.sleep(min(POLL_EVERY_S, remaining))
 
-        assert seen, "no vehicle served route PC15 during the observation window"
+        assert seen, f"no vehicle served {ROUTE_ID} during the observation window"
