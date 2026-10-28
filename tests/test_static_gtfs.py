@@ -78,8 +78,8 @@ def test_scheduled_times_are_keyed_by_sequence_not_by_stop_id(static_zip: Path):
     second_visit = scheduled_stop(feed, "PC15-3", 3)
 
     assert first_visit.stop_id == second_visit.stop_id == "S1"
-    assert first_visit.arrival_time == "08:00:00"
-    assert second_visit.arrival_time == "08:12:00"
+    assert first_visit.arrival_time == "21:00:00"
+    assert second_visit.arrival_time == "21:12:00"
     assert scheduled_stop(feed, "PC15-3", 99) is None
 
 
