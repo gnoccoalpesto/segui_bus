@@ -113,6 +113,16 @@ def parse_gtfs_zip(
         routes, routes_by_line = _parse_routes(_rows(archive, "routes.txt"))
         trips = _parse_trips(_rows(archive, "trips.txt"))
         trip_stops = _parse_stop_times(_rows(archive, "stop_times.txt"))
+        service_dates = _parse_calendar_dates(_rows(archive, "calendar_dates.txt"))
+
+    # One lookup table for "when is this trip at its n-th stop".
+    scheduled_by_seq = {
+        (trip_id, scheduled.stop_sequence): scheduled
+        for trip_id, scheduled_stops in trip_stops.items()
+        for scheduled in scheduled_stops
+    }
+    covered = sorted(service_dates)
+    calendar_range = (covered[0], covered[-1]) if covered else None
 
     return StaticFeed(
         etag=etag,
@@ -122,6 +132,9 @@ def parse_gtfs_zip(
         routes_by_line=routes_by_line,
         trips=trips,
         trip_stops=trip_stops,
+        scheduled_by_seq=scheduled_by_seq,
+        service_dates=service_dates,
+        calendar_range=calendar_range,
     )
 
 
@@ -181,9 +194,28 @@ def _parse_trips(rows: Iterator[dict[str, str]]) -> dict[str, Trip]:
             route_id=row["route_id"],
             direction_id=_int_or_none(row.get("direction_id")),
             headsign=row.get("trip_headsign") or None,
+            service_id=row.get("service_id") or None,
         )
         for row in rows
     }
+
+
+def _parse_calendar_dates(rows: Iterator[dict[str, str]]) -> dict[str, frozenset[str]]:
+    """calendar_dates.txt -> date -> the service ids running that day.
+
+    This feed has no calendar.txt, so service days exist only as exceptions:
+    exception_type 1 adds a service to a date, 2 removes it.
+    """
+    by_date: dict[str, set[str]] = {}
+
+    for row in rows:
+        services = by_date.setdefault(row["date"], set())
+        if row["exception_type"] == "1":
+            services.add(row["service_id"])
+        else:
+            services.discard(row["service_id"])
+
+    return {day: frozenset(services) for day, services in by_date.items() if services}
 
 
 def _parse_stop_times(rows: Iterator[dict[str, str]]) -> dict[str, tuple[ScheduledStop, ...]]:
@@ -220,6 +252,41 @@ def line_of_route(feed: StaticFeed, route_id: str) -> str | None:
     """The inverse mapping, used to fill TripRef.line on realtime data."""
     route = feed.routes.get(route_id)
     return route.line if route else None
+
+
+def service_ids_on(feed: StaticFeed, date_value: str) -> frozenset[str]:
+    """Service ids running on a GTFS Date ("20261028"); empty if uncovered."""
+    return feed.service_dates.get(date_value, frozenset())
+
+
+def is_date_covered(feed: StaticFeed, date_value: str) -> bool:
+    """Is this date inside the calendar the feed was built for?
+
+    The calendar ends 2026-11-01; after that every lookup silently finds
+    nothing, so callers should surface this instead of pretending.
+    """
+    if feed.calendar_range is None:
+        return False
+    first, last = feed.calendar_range
+    return first <= date_value <= last
+
+
+def trips_running_on(feed: StaticFeed, date_value: str) -> set[str]:
+    """Trip ids whose service runs on that date."""
+    services = service_ids_on(feed, date_value)
+    return {
+        trip_id
+        for trip_id, trip in feed.trips.items()
+        if trip.service_id is not None and trip.service_id in services
+    }
+
+
+def scheduled_stop(feed: StaticFeed, trip_id: str, stop_sequence: int) -> ScheduledStop | None:
+    """The scheduled time of one stop of a trip, keyed by sequence.
+
+    Keyed by sequence, not by stop_id: loop lines serve the same stop twice.
+    """
+    return feed.scheduled_stop(trip_id, stop_sequence)
 
 
 def find_stops_by_name(feed: StaticFeed, text: str) -> list[Stop]:

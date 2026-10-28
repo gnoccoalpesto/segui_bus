@@ -136,6 +136,7 @@ class Trip:
     route_id: str
     direction_id: int | None = None
     headsign: str | None = None
+    service_id: str | None = None  # joins calendar_dates.txt: which days it runs
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,3 +163,11 @@ class StaticFeed:
     routes_by_line: Mapping[str, Route]  # by human line number, e.g. "15"
     trips: Mapping[str, Trip]  # by trip_id
     trip_stops: Mapping[str, tuple[ScheduledStop, ...]]  # by trip_id, in order
+    # Scheduled times keyed by (trip_id, stop_sequence), never by stop_id:
+    # loop lines visit the same stop twice in one trip.
+    scheduled_by_seq: Mapping[tuple[str, int], ScheduledStop]
+    service_dates: Mapping[str, frozenset[str]]  # date "20261028" -> service ids
+    calendar_range: tuple[str, str] | None  # first and last covered date
+
+    def scheduled_stop(self, trip_id: str, stop_sequence: int) -> ScheduledStop | None:
+        return self.scheduled_by_seq.get((trip_id, stop_sequence))

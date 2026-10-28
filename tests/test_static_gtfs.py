@@ -5,79 +5,29 @@ without the network and without a 3.2 MB fixture. The cache behaviour is tested
 with respx, which fakes httpx at the transport level.
 """
 
-import zipfile
-from dataclasses import replace
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
 
-from segui_bus.config import load_settings
 from segui_bus.domain import GeoPoint
 from segui_bus.geo import around
 from segui_bus.static_gtfs import (
     StaticFeedUnavailable,
     find_stops_by_name,
+    is_date_covered,
     line_of_route,
     load_static,
     nearest_stop,
     parse_gtfs_zip,
     route_of_line,
+    scheduled_stop,
     stops_in_area,
+    trips_running_on,
 )
 
 GTFS_URL = "https://proxy.busone.app/seta-pc/gtfs.zip"
-
-# Note the quoted route_long_name: the real file has commas inside fields.
-STOPS = """stop_id,stop_name,stop_lat,stop_lon
-S1,"P.le Marconi, 20 (Stazione Fs corsia 1)",45.052069,9.705346
-S2,"P.le Marconi, 20 (Stazione Fs corsia 2)",45.052135,9.705325
-S3,"Ferrovia, corsia 2",45.060000,9.700000
-S4,CROCETTA,45.100000,9.800000
-"""
-
-ROUTES = """route_id,route_short_name,route_long_name,route_color
-PC15,15,Via Roma - Ferrovia,E3001B
-PC1,1,"Ferrovia - belvedere - Ferrovia",32CD32
-"""
-
-TRIPS = """route_id,service_id,trip_id,trip_headsign,direction_id
-PC15,SVC,PC15-1,Ferrovia,0
-PC15,SVC,PC15-2,Marconi,1
-"""
-
-# Deliberately out of order: PC15-1 lists stop_sequence 2 before 1.
-STOP_TIMES = """trip_id,arrival_time,departure_time,stop_id,stop_sequence
-PC15-1,19:40:00,19:40:00,S3,2
-PC15-1,19:32:00,19:32:00,S1,1
-PC15-2,19:45:00,19:45:00,S1,2
-PC15-2,19:32:00,19:32:00,S3,1
-"""
-
-
-def _write_zip(path: Path) -> Path:
-    files = {
-        "stops.txt": STOPS,
-        "routes.txt": ROUTES,
-        "trips.txt": TRIPS,
-        "stop_times.txt": STOP_TIMES,
-    }
-    with zipfile.ZipFile(path, "w") as archive:
-        for name, text in files.items():
-            archive.writestr(name, text)
-    return path
-
-
-@pytest.fixture
-def static_zip(tmp_path: Path) -> Path:
-    return _write_zip(tmp_path / "gtfs.zip")
-
-
-@pytest.fixture
-def settings(tmp_path: Path):
-    """Real settings, pointed at a throwaway cache directory."""
-    return replace(load_settings(), cache_dir=tmp_path / "cache")
 
 
 # --- parsing ---------------------------------------------------------------
@@ -118,6 +68,48 @@ def test_stop_times_are_ordered_by_stop_sequence(static_zip: Path):
     assert [s.stop_id for s in scheduled] == ["S1", "S3"]
     assert scheduled[0].arrival_time == "19:32:00"
     assert [s.stop_sequence for s in scheduled] == [1, 2]
+
+
+def test_scheduled_times_are_keyed_by_sequence_not_by_stop_id(static_zip: Path):
+    """PC15-3 visits S1 twice: the two visits have different times."""
+    feed = parse_gtfs_zip(static_zip)
+
+    first_visit = scheduled_stop(feed, "PC15-3", 1)
+    second_visit = scheduled_stop(feed, "PC15-3", 3)
+
+    assert first_visit.stop_id == second_visit.stop_id == "S1"
+    assert first_visit.arrival_time == "08:00:00"
+    assert second_visit.arrival_time == "08:12:00"
+    assert scheduled_stop(feed, "PC15-3", 99) is None
+
+
+# --- calendar --------------------------------------------------------------
+
+
+def test_parses_calendar_dates(static_zip: Path):
+    feed = parse_gtfs_zip(static_zip)
+
+    assert feed.service_dates["20261022"] == frozenset({"SVC", "OTHER"})
+    assert feed.service_dates["20261028"] == frozenset({"SVC"})
+    # Added and then removed on the same date: it must disappear.
+    assert "20261029" not in feed.service_dates
+    assert feed.calendar_range == ("20261022", "20261028")
+
+
+def test_is_date_covered(static_zip: Path):
+    feed = parse_gtfs_zip(static_zip)
+
+    assert is_date_covered(feed, "20261022")
+    assert is_date_covered(feed, "20261028")
+    assert not is_date_covered(feed, "20261101")  # past the range
+    assert not is_date_covered(feed, "20261001")  # before it
+
+
+def test_trips_running_on(static_zip: Path):
+    feed = parse_gtfs_zip(static_zip)
+
+    assert trips_running_on(feed, "20261028") == {"PC15-1", "PC15-2", "PC15-3", "PC1-1"}
+    assert trips_running_on(feed, "20261029") == set()  # uncovered date
 
 
 # --- lookups ---------------------------------------------------------------
