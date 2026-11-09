@@ -25,6 +25,54 @@ L'utente vuole essere avvisato quando l'autobus (o un generico autobus di una li
    domotiche come avvisi luminosi o per la semplice disponibilità dei dati
 
 
+## Comandi Telegram
+
+Il bot accetta comandi dai preset solo dalla chat configurata in
+`SEGUI_BUS_TELEGRAM_CHAT_ID`; ogni altro messaggio viene registrato e ignorato.
+La ricezione usa `getUpdates` con long polling e offset, senza webhook.
+
+```
+/help                          mostra la sintassi
+/list                          elenca i preset (* = seguita)
+/watch <id> | /watch_<id>      segue un preset e ne mostra i valori effettivi
+/add                           risponde con il modello da compilare
+/add <id> chiave=valore ...    crea un preset
+/set <id> chiave=valore ...    modifica un preset
+/remove <id>                   elimina un preset
+```
+
+`/add` senza argomenti risponde con questo modello (ordine fisso):
+
+```
+line=
+stop=
+radius_m=150
+stops_n=auto
+lead_minutes=
+earliest=
+on_time_tolerance_s=240
+assumed_speed_kmh=auto
+route_detour_factor=auto
+position_mismatch_m=auto
+strategy=auto
+```
+
+- I comandi e gli id non distinguono maiuscole/minuscole; gli id vengono
+  normalizzati in minuscolo (`[a-z0-9_-]+`). Le chiavi `chiave=valore` sono
+  quelle minuscole del modello qui sopra.
+- I valori con spazi si racchiudono tra virgolette, ad esempio
+  `stop="via roma"`. Tutto ciò che segue un `#` non quotato viene ignorato,
+  quindi una risposta con i valori effettivi (ad esempio
+  `stops_n=auto  # 1`) si può incollare tal quale in `/set`.
+- Le modifiche sono validate dal preset store prima di toccare la memoria e poi
+  riscritte in modo atomico in `config.json`. Un comando non valido risponde con
+  il motivo e la sintassi e non cambia nulla.
+- Seguire un preset azzera lo stato d'allarme del nuovo watch. Un `/set` che
+  cambia solo soglie, strategia o `earliest` conserva lo stato; un cambio di
+  linea o di fermata risolta, oppure `/remove`, lo scarta.
+- I campi `auto` non vengono mai salvati: sono ricalcolati dal feed statico e
+  mostrati con il valore calcolato accanto.
+
 ## Struttura del codice
 
 oggetti:
