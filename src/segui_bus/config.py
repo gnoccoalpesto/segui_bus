@@ -8,10 +8,16 @@ The variable names mirror ``.env.example``.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from datetime import time as wall_time
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from .clock import TIMEZONE, parse_service_date
+from .domain import StaticFeed
 
 # config.py lives in <repo>/src/segui_bus/, so three hops up is the repo root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +25,10 @@ VERSION_FILE = REPO_ROOT / "VERSION"
 
 # NOTE attribution line — messaggio attribuzione dati
 ATTRIBUTION = "BusOne (https://busone.app) e la fonte originale (SETA S.p.A.)"
+
+# Long-running service scheduling. See issue #3's resolution comment.
+REVALIDATION_RETRY_S = 15 * 60
+CALENDAR_WARN_DAYS = 7
 
 
 def read_version() -> str:
@@ -41,6 +51,11 @@ class Settings:
     fallback_vp_interval_s: int
     fallback_tu_interval_s: int
     cache_dir: Path
+    home: Path
+    config_path: Path
+    log_level: str
+    telegram_token: str | None
+    telegram_chat_id: str | None
 
     @property
     def client_header(self) -> str:
@@ -94,10 +109,16 @@ class Settings:
 def load_settings(env_file: Path | None = None) -> Settings:
     """Build Settings from the environment, with ``.env`` as an optional overlay.
 
-    ``override=False`` keeps real environment variables authoritative over .env.
-    Defaults match .env.example so the library works with no configuration.
+    ``SEGUI_BUS_HOME`` moves the whole deployment directory, so it is read from
+    the process environment *before* ``.env`` is loaded: the file it locates
+    cannot set the directory it lives in. ``override=False`` keeps real
+    environment variables authoritative over .env. Defaults match
+    .env.example so the library works with no configuration.
     """
-    load_dotenv(env_file or REPO_ROOT / ".env", override=False)
+    home = Path(os.getenv("SEGUI_BUS_HOME", str(REPO_ROOT))).expanduser()
+    load_dotenv(env_file or home / ".env", override=False)
+
+    log_level = os.getenv("SEGUI_BUS_LOG_LEVEL", "INFO").strip().upper() or "INFO"
 
     return Settings(
         version=read_version(),
@@ -110,5 +131,35 @@ def load_settings(env_file: Path | None = None) -> Settings:
         ws_path=os.getenv("BUSONE_WS_PATH", "/ws"),
         fallback_vp_interval_s=int(os.getenv("BUSONE_FALLBACK_VP_INTERVAL_S", "30")),
         fallback_tu_interval_s=int(os.getenv("BUSONE_FALLBACK_TU_INTERVAL_S", "15")),
-        cache_dir=Path(os.getenv("BUSONE_CACHE_DIR", str(REPO_ROOT / ".cache"))),
+        cache_dir=Path(os.getenv("BUSONE_CACHE_DIR", str(home / ".cache"))),
+        home=home,
+        config_path=home / "config.json",
+        log_level=log_level,
+        telegram_token=os.getenv("SEGUI_BUS_TELEGRAM_TOKEN") or None,
+        telegram_chat_id=os.getenv("SEGUI_BUS_TELEGRAM_CHAT_ID") or None,
     )
+
+
+def next_local_midnight(now: float | None = None) -> float:
+    """Epoch of the next local midnight (Europe/Rome, DST-aware)."""
+    moment = datetime.fromtimestamp(time.time() if now is None else now, TIMEZONE)
+    tomorrow = moment.date() + timedelta(days=1)
+    return datetime.combine(tomorrow, wall_time.min, tzinfo=TIMEZONE).timestamp()
+
+
+def calendar_warning(feed: StaticFeed, today: date) -> str | None:
+    """The once-a-day calendar-expiry warning for ``today``, if any (#3)."""
+    if feed.calendar_range is None:
+        return "GTFS calendar has no covered dates; schedule-based arms disabled"
+
+    last = parse_service_date(feed.calendar_range[1])
+    if today > last:
+        return (
+            f"GTFS calendar expired on {last.isoformat()}; "
+            "schedule-based arms disabled, fence only"
+        )
+
+    days = (last - today).days
+    if days <= CALENDAR_WARN_DAYS:
+        return f"GTFS calendar ends in {days} days ({last.isoformat()})"
+    return None

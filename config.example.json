@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "selected": "15_marconi",
+  "watches": {
+    "15_marconi": {
+      "line": "15",
+      "stop": "marconi",
+      "radius_m": 150,
+      "stops_n": "auto",
+      "lead_minutes": 5,
+      "earliest": "07:30:00",
+      "on_time_tolerance_s": 240,
+      "assumed_speed_kmh": "auto",
+      "route_detour_factor": "auto",
+      "position_mismatch_m": "auto",
+      "strategy": "auto"
+    }
+  }
+}
